@@ -2,12 +2,19 @@ package Lesson5Multythreading;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Semaphore;
 
-public class MainClass {
+class MainClass {
     public static final int CARS_COUNT = 4;
-    public static void main(String[] args) {
+    static Semaphore smpTunnel = new Semaphore(CARS_COUNT/2);
+    static CountDownLatch countDownLatch1 = new CountDownLatch(1);
+    static CountDownLatch countDownLatch2;
+
+    public static void main(String[] args) throws InterruptedException {
         System.out.println("ВАЖНОЕ ОБЪЯВЛЕНИЕ >>> Подготовка!!!");
         Race race = new Race(new Road(60), new Tunnel(), new Road(40));
+        countDownLatch2 = new CountDownLatch(CARS_COUNT * race.getStages().size());
         Car[] cars = new Car[CARS_COUNT];
         for (int i = 0; i < cars.length; i++) {
             cars[i] = new Car(race, 20 + (int) (Math.random() * 10));
@@ -15,11 +22,24 @@ public class MainClass {
         for (int i = 0; i < cars.length; i++) {
             new Thread(cars[i]).start();
         }
-        System.out.println("ВАЖНОЕ ОБЪЯВЛЕНИЕ >>> Гонка началась!!!");
+        new Thread(() ->
+        {
+            try {
+                Car.cdl.await();
+                System.out.println("ВАЖНОЕ ОБЪЯВЛЕНИЕ >>> Гонка началась!!!");
+                countDownLatch1.countDown();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        ).start();
+        countDownLatch2.await();
         System.out.println("ВАЖНОЕ ОБЪЯВЛЕНИЕ >>> Гонка закончилась!!!");
     }
 }
-public class Car implements Runnable {
+
+class Car implements Runnable {
+    static CountDownLatch cdl = new CountDownLatch(MainClass.CARS_COUNT);
     private static int CARS_COUNT;
     static {
         CARS_COUNT = 0;
@@ -45,15 +65,20 @@ public class Car implements Runnable {
             System.out.println(this.name + " готовится");
             Thread.sleep(500 + (int)(Math.random() * 800));
             System.out.println(this.name + " готов");
+            cdl.countDown();
+            cdl.await();
+            MainClass.countDownLatch1.await();
         } catch (Exception e) {
             e.printStackTrace();
         }
+
         for (int i = 0; i < race.getStages().size(); i++) {
             race.getStages().get(i).go(this);
         }
     }
 }
-public abstract class Stage {
+
+abstract class Stage {
     protected int length;
     protected String description;
     public String getDescription() {
@@ -61,7 +86,8 @@ public abstract class Stage {
     }
     public abstract void go(Car c);
 }
-public class Road extends Stage {
+
+class Road extends Stage {
     public Road(int length) {
         this.length = length;
         this.description = "Дорога " + length + " метров";
@@ -72,20 +98,24 @@ public class Road extends Stage {
             System.out.println(c.getName() + " начал этап: " + description);
             Thread.sleep(length / c.getSpeed() * 1000);
             System.out.println(c.getName() + " закончил этап: " + description);
+            MainClass.countDownLatch2.countDown();
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
 }
-public class Tunnel extends Stage {
+
+class Tunnel extends Stage {
     public Tunnel() {
         this.length = 80;
         this.description = "Тоннель " + length + " метров";
     }
     @Override
     public void go(Car c) {
+
         try {
             try {
+                MainClass.smpTunnel.acquire();
                 System.out.println(c.getName() + " готовится к этапу(ждет): " + description);
                 System.out.println(c.getName() + " начал этап: " + description);
                 Thread.sleep(length / c.getSpeed() * 1000);
@@ -93,16 +123,19 @@ public class Tunnel extends Stage {
                 e.printStackTrace();
             } finally {
                 System.out.println(c.getName() + " закончил этап: " + description);
+                MainClass.smpTunnel.release();
+                MainClass.countDownLatch2.countDown();
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 }
-public class Race {
+
+class Race {
     private ArrayList<Stage> stages;
     public ArrayList<Stage> getStages() { return stages; }
     public Race(Stage... stages) {
-        this.stages = new ArrayList<>(Arrays.asList(stages));
+        this.stages = new ArrayList<Stage>(Arrays.asList(stages));
     }
 }
